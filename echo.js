@@ -1,4 +1,4 @@
-(function() {
+(function () {
     let echo = null;
     let playerTrail = [];
     let timeSinceStart = 0;
@@ -10,6 +10,8 @@
     let despairing = false;
     let stunTimer = 0;
     let immunityTimer = 0;
+    let isInitialLevel = true;
+    let echoTimerText = null;
 
     function createEcho() {
         const player = window.localPlayer;
@@ -21,13 +23,13 @@
             vx: 0,
             vy: 0,
             lastPosIndex: 0,
-            color: "rgba(255, 0, 0, 0.6)",
-            canShoot: true
         };
         echoActive = true;
         despairing = false;
         stunTimer = 0;
         immunityTimer = 0;
+
+        updateEchoTimerUI("The Echo has arrived");
         console.log("The Echo is back...");
     }
 
@@ -36,7 +38,6 @@
 
         const player = window.localPlayer;
 
-        // Handle stun and immunity timers
         if (stunTimer > 0) {
             stunTimer -= delta;
             drawEcho(echo.x, echo.y, "rgba(120, 0, 0, 0.4)");
@@ -46,15 +47,13 @@
             immunityTimer -= delta;
         }
 
-        // Smart pathfinding:
         let target = playerTrail[echo.lastPosIndex] || { x: player.x, y: player.y };
 
-        const predictionChance = Math.random();
-        if (predictionChance < 0.3) {
-            // Predict player direction
-            const predictX = player.x + player.vx * 10;
-            const predictY = player.y + player.vy * 10;
-            target = { x: predictX, y: predictY };
+        if (Math.random() < 0.3) {
+            target = {
+                x: player.x + player.vx * 10,
+                y: player.y + player.vy * 10,
+            };
         }
 
         const dx = target.x - echo.x;
@@ -69,26 +68,22 @@
         echo.x += echo.vx;
         echo.y += echo.vy;
 
-        // Trail progression
         if (dist < 10 && echo.lastPosIndex < playerTrail.length - 1) {
             echo.lastPosIndex++;
         }
 
-        // Touch kill
         const pdx = player.x - echo.x;
         const pdy = player.y - echo.y;
         if (Math.sqrt(pdx * pdx + pdy * pdy) < 15) {
             player.die();
         }
 
-        // Laser
         const now = Date.now();
         if (now - lastLaserShot > ECHO_LASER_COOLDOWN) {
             lastLaserShot = now;
             fireLaserAtPlayer(echo.x, echo.y, player.x, player.y);
         }
 
-        // Draw echo with color based on immunity
         const color = immunityTimer > 0 ? "rgba(150, 0, 0, 0.6)" : "rgba(255, 0, 0, 0.4)";
         drawEcho(echo.x, echo.y, color);
     }
@@ -116,8 +111,7 @@
 
         const dx = toX - fromX;
         const dy = toY - fromY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 300) {
+        if (Math.sqrt(dx * dx + dy * dy) < 300) {
             window.localPlayer.die();
         }
     }
@@ -136,7 +130,6 @@
         }, 100);
     }
 
-    // Detect hits from bullets (scan bullets array and check collision)
     function checkForBulletHits() {
         if (!echo || stunTimer > 0 || immunityTimer > 0) return;
 
@@ -144,9 +137,7 @@
         for (let bullet of bullets) {
             const dx = bullet.x - echo.x;
             const dy = bullet.y - echo.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 12) {
-                // Bullet hit
+            if (Math.sqrt(dx * dx + dy * dy) < 12) {
                 console.log("Echo stunned!");
                 stunTimer = 2000;
                 immunityTimer = 10000;
@@ -155,34 +146,80 @@
         }
     }
 
-    // Hook into level win
+    function updateEchoTimerUI(text) {
+        if (!echoTimerText) {
+            echoTimerText = document.createElement("div");
+            echoTimerText.style.position = "fixed";
+            echoTimerText.style.top = "10px";
+            echoTimerText.style.left = "50%";
+            echoTimerText.style.transform = "translateX(-50%)";
+            echoTimerText.style.fontSize = "24px";
+            echoTimerText.style.fontFamily = "monospace";
+            echoTimerText.style.color = "white";
+            echoTimerText.style.textShadow = "0 0 8px black";
+            echoTimerText.style.zIndex = 9999;
+            document.body.appendChild(echoTimerText);
+        }
+
+        echoTimerText.textContent = text;
+        echoTimerText.style.display = "block";
+    }
+
+    function hideEchoTimerUI() {
+        if (echoTimerText) {
+            echoTimerText.style.display = "none";
+        }
+    }
+
     const originalVictory = window.winLevel;
-    window.winLevel = function(...args) {
+    window.winLevel = function (...args) {
         if (originalVictory) originalVictory.apply(this, args);
+
         if (echo) {
             despairAnimation();
         }
+
         setTimeout(() => {
             echo = null;
             playerTrail = [];
             timeSinceStart = 0;
+            isInitialLevel = false;
+            updateEchoTimerUI("Echo arrives in: 5.0s");
         }, 500);
     };
 
-    // Main loop
     const gameLoop = setInterval(() => {
         const player = window.localPlayer;
         if (!player || player.dead) return;
 
-        timeSinceStart += 50;
+        if (typeof player.level === "undefined") return; // wait for level load
 
-        // Track trail
-        playerTrail.push({ x: player.x, y: player.y, vx: player.vx, vy: player.vy });
-        if (playerTrail.length > 1000) playerTrail.shift();
-
-        if (timeSinceStart > ECHO_DELAY && !echo) {
-            createEcho();
+        if (isInitialLevel === null) {
+            isInitialLevel = player.level === 0;
         }
+
+        if (!isInitialLevel) {
+            timeSinceStart += 50;
+            const secondsLeft = Math.max(0, (ECHO_DELAY - timeSinceStart) / 1000);
+
+            if (!echo) {
+                updateEchoTimerUI(`Echo arrives in: ${secondsLeft.toFixed(1)}s`);
+            }
+
+            if (timeSinceStart > ECHO_DELAY && !echo) {
+                createEcho();
+            }
+        } else {
+            hideEchoTimerUI();
+        }
+
+        playerTrail.push({
+            x: player.x,
+            y: player.y,
+            vx: player.vx,
+            vy: player.vy,
+        });
+        if (playerTrail.length > 1000) playerTrail.shift();
 
         if (echoActive) {
             updateEcho(50);
